@@ -28,10 +28,11 @@ except usb.core.USBError as e:
 	print "USB Error: kernel_driver:", e.strerror
 	sys.exit(1)
 
-claimed = False
 # Set default configuration
+claimed = False
 try:
 	device.set_configuration()
+	device.reset()
 	usb.util.claim_interface(device, 0)
 	claimed = True
 except usb.core.USBError as e:
@@ -93,16 +94,30 @@ try:
 		raise Exception("USB Error", e)
 
 	# Read a data
-	try:
-		data = device.read(inEndpoint.bEndpointAddress, inEndpoint.wMaxPacketSize, interface.bInterfaceNumber, 3000)
-	except usb.core.USBError as e:
-		print "USB Error: read(in):", e.strerror
-		raise Exception("USB Error", e)
+	data = []
+	tryouts = 5
+	readed = False
+	print "Reading a tag..."
 
-	print "Data: ", data
+	while 1:
+	    try:
+		data += device.read(inEndpoint.bEndpointAddress, inEndpoint.wMaxPacketSize)
+		if not readed: 
+			print "Tag found..."
+		readed = True
+
+	    except usb.core.USBError as e:
+		tryouts -= 1
+		if e.args == ('Operation timed out',) and readed:
+			break
+		if tryouts < 0:
+			print "USB Error: write(out):", e.strerror
+			raise Exception("USB Error", e)
 
 except Exception as e:
 	print "Error:", e
+
+print "Data:", data
 
 if claimed:
 	usb.util.release_interface(device, interface)
