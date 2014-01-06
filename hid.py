@@ -16,19 +16,23 @@ if device is None:
 	print "Error: Device not found"
 	sys.exit(1)
 else:
-	print 'device:', "{:04x}".format(device.idVendor)+":{:04x}".format(device.idProduct)
+	print 'device:', "0x{:04x}".format(device.idVendor)+":0x{:04x}".format(device.idProduct)
 
 # Detach linux kernel driver if needed
 reattach = False
-if device.is_kernel_driver_active(0):
-	reattach = True
-	device.detach_kernel_driver(0)
+try:
+	if device.is_kernel_driver_active(0):
+		reattach = True
+		device.detach_kernel_driver(0)
+except usb.core.USBError as e:
+	print "USB Error: kernel_driver:", e.strerror
+	sys.exit(1)
 
 # Set default configuration
 try:
 	device.set_configuration()
 except usb.core.USBError as e:
-	print "USB Error: set_configuration: ", e.strerror
+	print "USB Error: set_configuration:", e.strerror
 	sys.exit(1)
 
 # Get USB configs
@@ -42,50 +46,63 @@ interface = usb.util.find_descriptor(
 	bAlternateSetting = alternateSetting
 )
 
-# Get OUT endpoint
-outEndpoint = usb.util.find_descriptor(
-	interface,
-	# Match the first OUT endpoint
-	custom_match = lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
-)
+usb.util.claim_interface(device, interface)
 
-# Get IN endpoint
-inEndpoint = usb.util.find_descriptor(
-	interface,
-	# Match the first IN endpoint
-	custom_match = lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN
-)
+print 'interface:', "0x{:04x}".format(interface.bInterfaceNumber)
 
-# Test outEndpoint
-if outEndpoint is None:
-	print "USB Error: OUT endpoint not found"
-	sys.exit(1)
-else:
-	print 'outEndpoint:', outEndpoint.bEndpointAddress, outEndpoint.wMaxPacketSize
-
-# Test inEndpoint
-if inEndpoint is None:
-	print "USB Error: IN endpoint not found"
-	sys.exit(1)
-else:
-	print 'inEndpoint:', inEndpoint.bEndpointAddress, inEndpoint.wMaxPacketSize
-
-# Write a data
 try:
-	# device.write(outEndpoint.bEndpointAddress, RFID_18K6CSetQuickAccessMode, interface.bInterfaceNumber, 1000)
-	device.ctrl_transfer(0x40, 0x03, 0, 0, RFID_18K6CSetQuickAccessMode) == len(RFID_18K6CSetQuickAccessMode)
-except usb.core.USBError as e:
-	print "USB Error: write(out):", e.strerror
-	sys.exit(1)
+	# Get OUT endpoint
+	outEndpoint = usb.util.find_descriptor(
+		interface,
+		# Match the first OUT endpoint
+		custom_match = lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
+	)
 
-# Read a data
-try:
-	data = device.read(inEndpoint.bEndpointAddress, 3, interface.bInterfaceNumber, 1000)
-except usb.core.USBError as e:
-	print "USB Error: read(in):", e.strerror
-	sys.exit(1)
+	# Get IN endpoint
+	inEndpoint = usb.util.find_descriptor(
+		interface,
+		# Match the first IN endpoint
+		custom_match = lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN
+	)
 
-print "Data: ", data
+	# Test outEndpoint
+	if outEndpoint is None:
+		print "USB Error: OUT endpoint not found"
+		raise Exception("USB Error", e)
+	else:
+		print 'outEndpoint:', "0x{:04x}".format(outEndpoint.bEndpointAddress), "max size:", outEndpoint.wMaxPacketSize
+
+	# Test inEndpoint
+	if inEndpoint is None:
+		print "USB Error: IN endpoint not found"
+		raise Exception("USB Error", e)
+	else:
+		print 'inEndpoint:', "0x{:04x}".format(inEndpoint.bEndpointAddress), "max size:", inEndpoint.wMaxPacketSize
+
+	# Write a data
+	try:
+		assert device.ctrl_transfer(0x21, 0x09, 0, 0, RFID_18K6CSetQuickAccessMode) is len(RFID_18K6CSetQuickAccessMode)
+		assert device.ctrl_transfer(0x21, 0x09, 0, 0, RFID_18K6CTagRead) is len(RFID_18K6CTagRead)
+	except usb.core.USBError as e:
+		print "USB Error: write(out):", e.strerror
+		raise Exception("USB Error", e)
+	except AssertionError:
+		print "USB Error: write(out): Write error"
+		raise Exception("USB Error", e)
+
+	# Read a data
+	try:
+		data = device.read(inEndpoint.bEndpointAddress, inEndpoint.wMaxPacketSize, interface.bInterfaceNumber, 3000)
+	except usb.core.USBError as e:
+		print "USB Error: read(in):", e.strerror
+		raise Exception("USB Error", e)
+
+	print "Data: ", data
+
+except Exception as e:
+	print "Error:", e
+
+usb.util.release_interface(device, interface)
 
 # Release the interface
 usb.util.dispose_resources(device)
