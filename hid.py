@@ -19,20 +19,24 @@ else:
 	print 'device:', "0x{:04x}".format(device.idVendor)+":0x{:04x}".format(device.idProduct)
 
 # Detach linux kernel driver if needed
-reattach = False
+attached = False
 try:
 	if device.is_kernel_driver_active(0):
-		reattach = True
+		attached = True
 		device.detach_kernel_driver(0)
 except usb.core.USBError as e:
 	print "USB Error: kernel_driver:", e.strerror
 	sys.exit(1)
 
+claimed = False
 # Set default configuration
 try:
 	device.set_configuration()
+	usb.util.claim_interface(device, 0)
+	claimed = True
 except usb.core.USBError as e:
 	print "USB Error: set_configuration:", e.strerror
+	usb.util.release_interface(device, 0)
 	sys.exit(1)
 
 # Get USB configs
@@ -45,8 +49,6 @@ interface = usb.util.find_descriptor(
 	config, bInterfaceNumber = interfaceNumber,
 	bAlternateSetting = alternateSetting
 )
-
-usb.util.claim_interface(device, interface)
 
 print 'interface:', "0x{:04x}".format(interface.bInterfaceNumber)
 
@@ -102,12 +104,13 @@ try:
 except Exception as e:
 	print "Error:", e
 
-usb.util.release_interface(device, interface)
+if claimed:
+	usb.util.release_interface(device, interface)
 
 # Release the interface
 usb.util.dispose_resources(device)
 
 # Re-attach linux kernel driver if needed
-if reattach:
+if attached:
 	device.attach_kernel_driver(0)
 
