@@ -1,6 +1,8 @@
 RFID ME Python Linux interface
 ==============
 
+http://www.mti.com.tw/rfidme/
+
 Usage:
 
 ```
