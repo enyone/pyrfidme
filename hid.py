@@ -6,7 +6,50 @@ import usb.util
 
 # RFID ME commands
 RFID_18K6CSetQuickAccessMode = "\x5B\x03\x01"
-RFID_18K6CTagRead = "\x37\x09\x02\x00\x00\x00\x00\x00"
+RFID_AntennaPortSetPowerLevel = "\xC0\x03\x12"
+RFID_18K6CTagInventory = "\x31\x03\x01"
+RFID_18K6CTagRead = "\x37\x09\x01\x02\x00\x00\x00\x00\x06"
+
+# Send USB ctrl_transfer and read response data from IN endpoint
+def sendCommand(device, inEndpoint, data):
+	
+	# Write a data
+	try:
+		assert device.ctrl_transfer(0x21, 0x09, 0, 0, data) is len(data)
+	except usb.core.USBError as e:
+		print "USB Error: write(out):", e.strerror
+		raise Exception("USB Error", e)
+	except AssertionError:
+		print "USB Error: write(out): Write error"
+		raise Exception("USB Error", e)
+
+	# Read a data
+	data = []
+	tryouts = 5
+	readed = False
+	print "Sending command..."
+
+	while 1:
+	    try:
+		data += device.read(inEndpoint.bEndpointAddress, inEndpoint.wMaxPacketSize)
+		if not readed: 
+			print "Got response..."
+		readed = True
+		return data
+
+	    except usb.core.USBError as e:
+		tryouts -= 1
+		if e.args == ('Operation timed out',) and readed:
+			return data
+		if tryouts < 0:
+			print "USB Error: write(out):", e.strerror
+			raise Exception("USB Error", e)
+
+
+# Check arguments
+if len(sys.argv) < 2:
+	print "Usage: python hid.py read"
+	sys.exit(1)
 
 # Get a device interface (RFID ME reader 1325:c029)
 device = usb.core.find(idVendor=0x1325, idProduct=0xc029)
@@ -54,26 +97,12 @@ interface = usb.util.find_descriptor(
 print 'interface:', "0x{:04x}".format(interface.bInterfaceNumber)
 
 try:
-	# Get OUT endpoint
-	outEndpoint = usb.util.find_descriptor(
-		interface,
-		# Match the first OUT endpoint
-		custom_match = lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT
-	)
-
 	# Get IN endpoint
 	inEndpoint = usb.util.find_descriptor(
 		interface,
 		# Match the first IN endpoint
 		custom_match = lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN
 	)
-
-	# Test outEndpoint
-	if outEndpoint is None:
-		print "USB Error: OUT endpoint not found"
-		raise Exception("USB Error", e)
-	else:
-		print 'outEndpoint:', "0x{:04x}".format(outEndpoint.bEndpointAddress), "max size:", outEndpoint.wMaxPacketSize
 
 	# Test inEndpoint
 	if inEndpoint is None:
@@ -82,43 +111,34 @@ try:
 	else:
 		print 'inEndpoint:', "0x{:04x}".format(inEndpoint.bEndpointAddress), "max size:", inEndpoint.wMaxPacketSize
 
-	# Write a data
-	try:
-		assert device.ctrl_transfer(0x21, 0x09, 0, 0, RFID_18K6CSetQuickAccessMode) is len(RFID_18K6CSetQuickAccessMode)
-		assert device.ctrl_transfer(0x21, 0x09, 0, 0, RFID_18K6CTagRead) is len(RFID_18K6CTagRead)
-	except usb.core.USBError as e:
-		print "USB Error: write(out):", e.strerror
-		raise Exception("USB Error", e)
-	except AssertionError:
-		print "USB Error: write(out): Write error"
-		raise Exception("USB Error", e)
+	# Set power
+	data = sendCommand(device, inEndpoint, RFID_AntennaPortSetPowerLevel)
 
-	# Read a data
-	data = []
-	tryouts = 5
-	readed = False
-	print "Reading a tag..."
+	print "Response data:", map(hex, data)
 
-	while 1:
-	    try:
-		data += device.read(inEndpoint.bEndpointAddress, inEndpoint.wMaxPacketSize)
-		if not readed: 
-			print "Tag found..."
-		readed = True
+	if data[0] == 0xC1 and data[1] == 0x03 and data[2] == 0x0:
+		print "RFID_AntennaPortSetPowerLevel: OK"
+	else:
+		print "RFID_AntennaPortSetPowerLevel: Failed"
 
-	    except usb.core.USBError as e:
-		tryouts -= 1
-		if e.args == ('Operation timed out',) and readed:
-			break
-		if tryouts < 0:
-			print "USB Error: write(out):", e.strerror
-			raise Exception("USB Error", e)
+	if sys.argv[1] == "read":
+		# Tag inventory
+		data = sendCommand(device, inEndpoint, RFID_18K6CTagInventory)
+
+		print "Response data:", map(hex, data)
+
+		if data[0] == 0x32 and data[1] == 0x40 and data[2] == 0x0:
+			print "RFID_18K6CTagInventory: OK"
+			print "Tags found:", data[3]
+			print "First tag data:", map(hex, data[5:data[4]+1])
+		else:
+			print "RFID_18K6CTagInventory: Failed"
+
 
 except Exception as e:
 	print "Error:", e
 
-print "Data:", data
-
+# Release if claimed
 if claimed:
 	usb.util.release_interface(device, interface)
 
